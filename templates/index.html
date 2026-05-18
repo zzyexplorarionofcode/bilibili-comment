@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B站历史评论查询</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #f5f6f8; color: #1a1a2e; line-height: 1.6; min-height: 100vh;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
+
+  /* Header */
+  h1 { font-size: 24px; font-weight: 700; margin-bottom: 24px; display: flex; align-items: center; gap: 10px; }
+  h1 small { font-size: 14px; font-weight: 400; color: #888; }
+
+  /* Search Box */
+  .search-box {
+    background: #fff; border-radius: 12px; padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  }
+  .search-box label { font-size: 14px; font-weight: 600; color: #555; white-space: nowrap; }
+  .search-box input[type="number"] {
+    flex: 1; min-width: 160px; padding: 10px 14px; border: 1px solid #d0d5dd;
+    border-radius: 8px; font-size: 15px; outline: none; transition: border-color .2s;
+  }
+  .search-box input[type="number"]:focus { border-color: #4f6ef7; }
+  .search-box select {
+    padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 8px;
+    font-size: 14px; background: #fff; outline: none; cursor: pointer;
+  }
+  .search-box button {
+    padding: 10px 28px; background: #4f6ef7; color: #fff; border: none;
+    border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: background .2s; white-space: nowrap;
+  }
+  .search-box button:hover { background: #3b5de7; }
+  .search-box button:disabled { background: #a0b0f0; cursor: not-allowed; }
+
+  /* User Card */
+  .user-card {
+    background: #fff; border-radius: 12px; padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+    display: none; align-items: center; gap: 16px;
+  }
+  .user-card.visible { display: flex; }
+  .user-card img {
+    width: 64px; height: 64px; border-radius: 50%; object-fit: cover;
+    background: #eee;
+  }
+  .user-card .info { flex: 1; }
+  .user-card .name { font-size: 18px; font-weight: 700; }
+  .user-card .name .level {
+    display: inline-block; font-size: 11px; background: #fb7299; color: #fff;
+    padding: 1px 7px; border-radius: 4px; margin-left: 8px; vertical-align: middle;
+  }
+  .user-card .meta { font-size: 13px; color: #888; margin-top: 4px; }
+  .user-card .sign { font-size: 13px; color: #666; margin-top: 4px; }
+  .user-card .badge {
+    text-align: right; font-size: 13px; color: #888; white-space: nowrap;
+  }
+  .user-card .badge span { font-weight: 700; color: #1a1a2e; }
+
+  /* Progress */
+  .progress-box {
+    background: #fff; border-radius: 12px; padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+    display: none;
+  }
+  .progress-box.visible { display: block; }
+  .progress-box .phase { font-size: 14px; color: #666; margin-bottom: 8px; }
+  .progress-box .phase span { color: #1a1a2e; font-weight: 600; }
+  .progress-bar {
+    height: 6px; background: #e8eaed; border-radius: 3px; overflow: hidden; margin-bottom: 8px;
+  }
+  .progress-bar .fill {
+    height: 100%; background: linear-gradient(90deg, #4f6ef7, #7c5cfc);
+    border-radius: 3px; transition: width .3s; width: 0%;
+  }
+  .progress-box .detail { font-size: 13px; color: #888; display: flex; gap: 16px; flex-wrap: wrap; }
+
+  /* Results */
+  .results-box { display: none; }
+  .results-box.visible { display: block; }
+  .results-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+  }
+  .results-header h2 { font-size: 18px; }
+  .results-header .count { font-size: 14px; color: #888; }
+
+  .comment-table {
+    width: 100%; border-collapse: separate; border-spacing: 0 8px;
+  }
+  .comment-row td {
+    background: #fff; padding: 14px 16px; vertical-align: top;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .comment-row td:first-child { border-radius: 10px 0 0 10px; width: 140px; }
+  .comment-row td:last-child { border-radius: 0 10px 10px 0; }
+  .video-thumb {
+    width: 120px; height: 68px; object-fit: cover; border-radius: 6px;
+    display: block; background: #eee; cursor: pointer;
+  }
+  .video-title {
+    font-size: 14px; font-weight: 600; margin-bottom: 6px;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4;
+  }
+  .video-title a { color: #1a1a2e; text-decoration: none; }
+  .video-title a:hover { color: #4f6ef7; }
+  .comment-text {
+    font-size: 14px; color: #333; margin-bottom: 8px;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+    -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  }
+  .comment-meta { font-size: 12px; color: #999; display: flex; gap: 12px; }
+  .comment-meta .likes { color: #fb7299; }
+
+  /* Pagination */
+  .pagination {
+    display: flex; justify-content: center; align-items: center;
+    gap: 8px; margin-top: 16px; flex-wrap: wrap;
+  }
+  .pagination button {
+    padding: 6px 14px; border: 1px solid #d0d5dd; background: #fff;
+    border-radius: 6px; cursor: pointer; font-size: 13px; transition: all .2s;
+  }
+  .pagination button:hover:not(:disabled) { border-color: #4f6ef7; color: #4f6ef7; }
+  .pagination button:disabled { opacity: .5; cursor: not-allowed; }
+  .pagination .current { font-size: 13px; color: #666; }
+
+  /* Error */
+  .error-box {
+    background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px;
+    padding: 14px 18px; color: #dc2626; font-size: 14px; margin-bottom: 20px;
+    display: none;
+  }
+  .error-box.visible { display: block; }
+
+  /* Empty */
+  .empty-box {
+    text-align: center; padding: 60px 20px; color: #888; font-size: 15px;
+    display: none;
+  }
+  .empty-box.visible { display: block; }
+
+  @media (max-width: 640px) {
+    .search-box { flex-direction: column; align-items: stretch; }
+    .search-box input[type="number"] { min-width: auto; }
+    .comment-row td:first-child { width: 100px; }
+    .video-thumb { width: 80px; height: 45px; }
+    .user-card { flex-wrap: wrap; }
+    .user-card .badge { text-align: left; width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>B站历史评论查询 <small>按 UID 查找用户的历史评论</small></h1>
+
+  <!-- 搜索栏 -->
+  <h2 style="font-size:15px;margin-bottom:8px;color:#666;">按 UID 查询（扫描该 UP 主的视频评论区）</h2>
+  <div class="search-box">
+    <label for="uid">UID</label>
+    <input type="number" id="uid" placeholder="输入 B站 UID，如 161775300" value="161775300">
+    <label for="depth">扫描深度</label>
+    <select id="depth">
+      <option value="1">1页 (50个视频)</option>
+      <option value="2" selected>2页 (100个视频)</option>
+      <option value="3">3页 (150个视频)</option>
+      <option value="5">5页 (250个视频)</option>
+    </select>
+    <button id="scanBtn" onclick="startScan()">查询评论</button>
+  </div>
+
+  <h2 style="font-size:15px;margin-bottom:8px;color:#666;">查询我的评论（需配置 Cookie，仅显示收到回复的评论）</h2>
+  <div class="search-box">
+    <button id="myScanBtn" onclick="startMyScan()" style="background:#fb7299;">查询我的评论</button>
+  </div>
+
+  <!-- 错误 -->
+  <div id="errorBox" class="error-box"></div>
+
+  <!-- 用户信息 -->
+  <div id="userCard" class="user-card">
+    <img id="userAvatar" src="" alt="avatar">
+    <div class="info">
+      <div class="name">
+        <span id="userName"></span>
+        <span class="level" id="userLevel"></span>
+      </div>
+      <div class="sign" id="userSign"></div>
+      <div class="meta" id="userMeta"></div>
+    </div>
+    <div class="badge">
+      粉丝 <span id="userFollowers"></span><br>
+      视频 <span id="userVideos"></span>
+    </div>
+  </div>
+
+  <!-- 进度 -->
+  <div id="progressBox" class="progress-box">
+    <div class="phase" id="progressPhase">准备中</div>
+    <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
+    <div class="detail">
+      <span id="progressVideo">视频: 0/0</span>
+      <span id="progressComment">已找到: 0 条评论</span>
+      <span id="progressCurrent"></span>
+    </div>
+  </div>
+
+  <!-- 结果 -->
+  <div id="resultsBox" class="results-box">
+    <div class="results-header">
+      <h2>评论列表</h2>
+      <span class="count" id="resultCount"></span>
+    </div>
+    <table class="comment-table">
+      <tbody id="commentBody"></tbody>
+    </table>
+    <div id="emptyBox" class="empty-box">没有找到该用户的评论</div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+</div>
+
+<script>
+let eventSource = null;
+let allComments = [];
+let currentPage = 1;
+const PAGE_SIZE = 20;
+
+function fmtTime(unix) {
+  const d = new Date(unix * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fmtCount(n) {
+  if (n >= 10000) return (n / 10000).toFixed(1) + '万';
+  return n;
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorBox');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+
+function hideError() {
+  document.getElementById('errorBox').classList.remove('visible');
+}
+
+async function startScan() {
+  const uid = parseInt(document.getElementById('uid').value);
+  const depth = parseInt(document.getElementById('depth').value);
+
+  if (!uid || uid <= 0) { showError('请输入有效的 UID'); return; }
+
+  // 重置界面
+  hideError();
+  document.getElementById('userCard').classList.remove('visible');
+  document.getElementById('progressBox').classList.add('visible');
+  document.getElementById('resultsBox').classList.remove('visible');
+  document.getElementById('emptyBox').classList.remove('visible');
+  document.getElementById('pagination').innerHTML = '';
+  document.getElementById('commentBody').innerHTML = '';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressPhase').innerHTML = '正在获取用户信息...';
+
+  const btn = document.getElementById('scanBtn');
+  const myBtn = document.getElementById('myScanBtn');
+  btn.disabled = true; myBtn.disabled = true;
+  btn.textContent = '扫描中...';
+
+  allComments = [];
+  currentPage = 1;
+
+  try {
+    // 1. 获取用户信息
+    const infoResp = await fetch(`/api/user/${uid}/info`);
+    const infoData = await infoResp.json();
+    if (infoData.code !== 0) {
+      showError(infoData.detail || '获取用户信息失败');
+      btn.disabled = false; myBtn.disabled = false;
+      btn.textContent = '查询评论';
+      document.getElementById('progressBox').classList.remove('visible');
+      return;
+    }
+    showUserInfo(infoData.data);
+
+    // 2. 启动扫描
+    const scanResp = await fetch(`/api/scan/${uid}?depth=${depth}`);
+    const scanData = await scanResp.json();
+    connectSSE(scanData.task_id);
+
+  } catch (err) {
+    showError('网络错误: ' + err.message);
+    btn.disabled = false; myBtn.disabled = false;
+    btn.textContent = '查询评论';
+    document.getElementById('progressBox').classList.remove('visible');
+  }
+}
+
+async function startMyScan() {
+  // 重置界面
+  hideError();
+  document.getElementById('userCard').classList.remove('visible');
+  document.getElementById('progressBox').classList.add('visible');
+  document.getElementById('resultsBox').classList.remove('visible');
+  document.getElementById('emptyBox').classList.remove('visible');
+  document.getElementById('pagination').innerHTML = '';
+  document.getElementById('commentBody').innerHTML = '';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressPhase').innerHTML = '正在获取评论历史...';
+
+  const btn = document.getElementById('myScanBtn');
+  const scanBtn = document.getElementById('scanBtn');
+  btn.disabled = true; scanBtn.disabled = true;
+  btn.textContent = '查询中...';
+
+  allComments = [];
+  currentPage = 1;
+
+  try {
+    const resp = await fetch('/api/my-comments');
+    const data = await resp.json();
+    connectSSE(data.task_id);
+  } catch (err) {
+    showError('网络错误: ' + err.message);
+    btn.disabled = false; scanBtn.disabled = false;
+    btn.textContent = '查询我的评论';
+    document.getElementById('progressBox').classList.remove('visible');
+  }
+}
+
+function showUserInfo(data) {
+  document.getElementById('userAvatar').src = data.face || '';
+  document.getElementById('userName').textContent = data.name || '未知';
+  document.getElementById('userLevel').textContent = 'Lv' + (data.level || '?');
+  document.getElementById('userSign').textContent = data.sign || '';
+  document.getElementById('userMeta').textContent = 'UID: ' + (data.mid || '');
+  document.getElementById('userFollowers').textContent = fmtCount(data.follower || 0);
+  document.getElementById('userVideos').textContent = data.video_count || 0;
+  document.getElementById('userCard').classList.add('visible');
+}
+
+function connectSSE(taskId) {
+  if (eventSource) { eventSource.close(); }
+
+  eventSource = new EventSource(`/api/task/${taskId}/events`);
+
+  eventSource.addEventListener('progress', function(e) {
+    const data = JSON.parse(e.data);
+    updateProgress(data);
+  });
+
+  eventSource.addEventListener('complete', function(e) {
+    const data = JSON.parse(e.data);
+    allComments = data.comments || [];
+    document.getElementById('scanBtn').disabled = false;
+    document.getElementById('scanBtn').textContent = '查询评论';
+    const myBtn = document.getElementById('myScanBtn');
+    myBtn.disabled = false; myBtn.textContent = '查询我的评论';
+    document.getElementById('progressBox').classList.remove('visible');
+
+    if (allComments.length === 0) {
+      document.getElementById('emptyBox').classList.add('visible');
+    } else {
+      showResults();
+    }
+    eventSource.close();
+    eventSource = null;
+  });
+
+  eventSource.addEventListener('error', function(e) {
+    let msg = '扫描出错';
+    try { const d = JSON.parse(e.data); msg = d.error || msg; } catch(ex) {}
+    showError(msg);
+    document.getElementById('scanBtn').disabled = false;
+    document.getElementById('scanBtn').textContent = '查询评论';
+    const myBtn = document.getElementById('myScanBtn');
+    myBtn.disabled = false; myBtn.textContent = '查询我的评论';
+    document.getElementById('progressBox').classList.remove('visible');
+    eventSource.close();
+    eventSource = null;
+  });
+}
+
+function updateProgress(data) {
+  const total = data.total_videos || 1;
+  const scanned = data.video_scanned || 0;
+  const pct = Math.min(100, Math.round((scanned / total) * 100));
+
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressPhase').innerHTML =
+    (data.phase || '扫描中') + (data.current_video ? '：<span>' + escapeHtml(data.current_video) + '</span>' : '');
+  // 泛化：可能显示视频进度或页数进度
+  const scannedLabel = data.current_video ? '视频' : '页';
+  document.getElementById('progressVideo').textContent =
+    `${scannedLabel}: ${scanned}/${total}`;
+  document.getElementById('progressComment').textContent =
+    `已找到: ${data.comments_found || 0} 条评论`;
+  document.getElementById('progressCurrent').textContent =
+    data.current_video ? '当前: ' + escapeHtml(data.current_video).substring(0, 40) : '';
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function showResults() {
+  document.getElementById('resultsBox').classList.add('visible');
+  document.getElementById('resultCount').textContent =
+    `共找到 ${allComments.length} 条评论（已合并回复）`;
+  currentPage = 1;
+  renderPage(currentPage);
+}
+
+function renderPage(page) {
+  currentPage = page;
+  const total = allComments.length;
+  const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+  const start = (page - 1) * PAGE_SIZE;
+  const end = Math.min(start + PAGE_SIZE, total);
+  const pageData = allComments.slice(start, end);
+
+  const tbody = document.getElementById('commentBody');
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+  for (const c of pageData) {
+    const tr = document.createElement('tr');
+    tr.className = 'comment-row';
+
+    const replies = c.replies || [];
+    const replyList = replies.length > 0
+      ? replies.map(r => '<div class="reply-text" style="font-size:12px;color:#888;margin-top:4px;padding:6px 8px;background:#f7f7f8;border-radius:6px;border-left:3px solid #fb7299;">↳ ' + escapeHtml(r) + '</div>').join('')
+      : '';
+
+    tr.innerHTML = `
+      <td class="thumb-cell">
+        ${c.video_bvid ? `<a href="https://www.bilibili.com/video/${escapeHtml(c.video_bvid)}" target="_blank" rel="noopener">
+          <img class="video-thumb" src="${escapeHtml(c.video_pic)}" alt="" loading="lazy"
+               onerror="this.style.display='none'">
+        </a>` : ''}
+      </td>
+      <td class="comment-cell">
+        <div class="video-title"><a href="https://www.bilibili.com/video/${escapeHtml(c.video_bvid || '')}" target="_blank" rel="noopener">评论于 ${escapeHtml(c.video_bvid || '未知视频')}</a></div>
+        <div class="comment-text">${escapeHtml(c.comment)}</div>
+        ${c.target_content && c.target_content !== c.comment ? '<div class="target-text" style="font-size:12px;color:#666;margin-top:4px;padding:4px 8px;background:#f0f0f5;border-radius:4px;">被回复: ' + escapeHtml(c.target_content.substring(0, 200)) + '</div>' : ''}
+        ${replyList}
+        <div class="comment-meta">
+          <span>${fmtTime(c.time)}</span>
+          ${c.reply_count ? '<span class="likes">💬 ' + c.reply_count + ' 条回复</span>' : ''}
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // 分页控件
+  const pag = document.getElementById('pagination');
+  while (pag.firstChild) pag.removeChild(pag.firstChild);
+  if (totalPages <= 1) return;
+  var prevBtn = document.createElement('button');
+  prevBtn.textContent = '上一页';
+  prevBtn.disabled = (page <= 1);
+  if (page > 1) prevBtn.onclick = function() { renderPage(page - 1); };
+  pag.appendChild(prevBtn);
+  var spanEl = document.createElement('span');
+  spanEl.className = 'current';
+  spanEl.textContent = page + ' / ' + totalPages;
+  pag.appendChild(spanEl);
+  var nextBtn = document.createElement('button');
+  nextBtn.textContent = '下一页';
+  nextBtn.disabled = (page >= totalPages);
+  if (page < totalPages) nextBtn.onclick = function() { renderPage(page + 1); };
+  pag.appendChild(nextBtn);
+}
+
+// 回车触发搜索
+document.getElementById('uid').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') startScan();
+});
+</script>
+</body>
+</html>
