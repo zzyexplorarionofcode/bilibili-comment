@@ -10,6 +10,7 @@ Cookie 配置（环境变量）：
 """
 
 import hashlib
+import json
 import os
 import random
 import re
@@ -40,25 +41,39 @@ HEADERS = {
 }
 
 
+DELETED_RPIDS_FILE = os.path.join(os.path.dirname(__file__) or ".", ".deleted_rpids.json")
+
+
+def _save_deleted_rpids():
+    """将已删除的 rpid 集合持久化到文件"""
+    try:
+        with open(DELETED_RPIDS_FILE, "w") as f:
+            json.dump(list(BilibiliClient._deleted_rpids), f)
+    except Exception:
+        pass
+
+
 class BilibiliClient:
     """每个实例持有一个独立的 curl_cffi Session"""
+    _deleted_rpids: set = set()  # 类级共享，记录已删除的 rpid
 
-    def __init__(self):
+    def __init__(self, cookie_str=None):
         self.session = requests.Session(impersonate="chrome120")
         self.session.headers.update(HEADERS)
         self._mixin_key = None
         self._keys_refreshed = False  # 防死循环
         self._session_ready = False
-        self._load_cookies()
+        self._my_uid = None  # 登录用户的 UID，从 nav API 获取
+        self._raw_cookie = cookie_str  # 原始 Cookie 字符串，用于提取 bili_jct
+        self._load_cookies(cookie_str)
 
-    def _build_cookie_str(self) -> str:
-        """从环境变量构建 Cookie 字符串"""
-        # 优先使用完整 Cookie 字符串
+    def _build_cookie_str(self, cookie_str=None) -> str:
+        """构建 Cookie 字符串：优先使用参数，其次是环境变量"""
+        if cookie_str:
+            return cookie_str
         cookie_str = os.environ.get("BILIBILI_COOKIE", "").strip()
         if cookie_str:
             return cookie_str
-
-        # 分别设置
         mapping = [
             ("BILIBILI_SESSDATA", "SESSDATA"),
             ("BILIBILI_BILI_JCT", "bili_jct"),
@@ -72,9 +87,9 @@ class BilibiliClient:
                 parts.append(f"{cookie_key}={val}")
         return "; ".join(parts)
 
-    def _load_cookies(self):
-        """将环境变量中的 Cookie 注入到 Session 的 CookieJar 中"""
-        cookie_str = self._build_cookie_str()
+    def _load_cookies(self, cookie_str=None):
+        """将 Cookie 注入到 Session 的 CookieJar 中：优先使用参数"""
+        cookie_str = self._build_cookie_str(cookie_str)
         if not cookie_str:
             return
 
@@ -180,12 +195,15 @@ class BilibiliClient:
         q = urllib.parse.urlencode(p, safe="!'()*")
         return f"https://api.bilibili.com/x/space/wbi/arc/search?{q}"
 
-    def _request(self, url: str, max_retries=3):
-        """带反爬重试的 GET 请求，处理 HTTP 412、JSON -799/-412/-401、网络超时"""
+    def _request(self, url: str, max_retries=3, method="GET", data=None):
+        """带反爬重试的请求，支持 GET/POST，处理 HTTP 412、JSON -799/-412、网络超时"""
         last_err = None
         for attempt in range(max_retries):
             try:
-                resp = self.session.get(url, timeout=15)
+                if method == "POST":
+                    resp = self.session.post(url, data=data, timeout=15)
+                else:
+                    resp = self.session.get(url, timeout=15)
             except Exception as e:
                 last_err = e
                 wait = (attempt + 1) * 5
@@ -200,9 +218,9 @@ class BilibiliClient:
 
             # JSON 级别限流 / 风控
             try:
-                data = resp.json()
-                code = data.get("code", 0)
-                if code in (-799, -412, -401):
+                resp_data = resp.json()
+                code = resp_data.get("code", 0)
+                if code in (-799, -412):
                     wait = (attempt + 1) * 5
                     time.sleep(wait)
                     continue
@@ -298,6 +316,41 @@ class BilibiliClient:
 
         replies = data["data"].get("replies")
         return replies if replies is not None else []
+
+    # ---------- 删除评论 ----------
+
+    def delete_comment(self, aid: int, rpid: int) -> dict:
+        """删除自己的评论（需要 bili_jct）"""
+        self._ensure_session()
+        # 从原始 Cookie 字符串中提取 bili_jct
+        csrf = ""
+        cookie_str = self._raw_cookie or self._build_cookie_str()
+        for item in cookie_str.split(";"):
+            kv = item.strip().split("=", 1)
+            if len(kv) == 2 and kv[0].strip() == "bili_jct":
+                csrf = kv[1].strip()
+                break
+        data = {"oid": str(aid), "type": "1", "rpid": str(rpid), "csrf": csrf}
+        try:
+            resp = self.session.post(
+                "https://api.bilibili.com/x/v2/reply/del",
+                data=data,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Referer": "https://www.bilibili.com/",
+                    "Origin": "https://www.bilibili.com",
+                },
+                timeout=15,
+            )
+            rj = resp.json()
+            print(f"[DELETE DEBUG] rpid={rpid} aid={aid} csrf_len={len(csrf)} resp={rj}")
+            if rj.get("code") == 0:
+                BilibiliClient._deleted_rpids.add(rpid)
+                _save_deleted_rpids()
+            return rj
+        except Exception as e:
+            print(f"[DELETE DEBUG] exception: {e}")
+            return {"code": -1, "message": str(e)}
 
     # ---------- 扫描编排 ----------
 
@@ -482,6 +535,14 @@ class BilibiliClient:
         raw = []
         for entry in items:
             item = entry.get("item", {})
+
+            # 首次调试：打印 item 所有字段，确认 target_id 是否存在
+            if not raw:
+                print(f"[MSGFEED DEBUG] item keys: {sorted(item.keys())}")
+                for k in sorted(item.keys()):
+                    if k.endswith("_id") or k == "rpid":
+                        print(f"[MSGFEED DEBUG]   {k} = {item[k]}")
+
             title = item.get("title", "") or ""
             root = item.get("root_reply_content", "") or ""
             target = item.get("target_reply_content", "") or ""
@@ -491,9 +552,13 @@ class BilibiliClient:
             target = re.sub(r"<[^>]+>", "", target)
             source = re.sub(r"<[^>]+>", "", source)
 
-            comment_text = title if title else root
+            # 优先 target_reply_content（被回复的对象 = 你的评论）
+            comment_text = target if target.strip() else (title if title.strip() else root)
             if not comment_text.strip():
                 continue
+
+            # rpid: 优先 target_id（你的评论 ID），其次 root_id
+            rpid = item.get("target_id", 0) or item.get("root_id", 0)
 
             uri = item.get("uri", "")
             bvid = ""
@@ -502,6 +567,8 @@ class BilibiliClient:
                 if m:
                     bvid = m.group(1)
 
+            # root_reply_content = 你回复的根评论内容
+            root_content = root if root.strip() else ""
             raw.append({
                 "video_bvid": bvid,
                 "video_pic": "",
@@ -509,12 +576,20 @@ class BilibiliClient:
                 "comment": comment_text,
                 "time": entry.get("reply_time", 0),
                 "likes": 0,
-                "rpid": item.get("root_id", 0),
+                "rpid": rpid,
                 "reply_to_me": source,
                 "target_content": target,
+                "root_content": root_content,
             })
 
         stats["comments_found"] = len(raw)
+
+        # 过滤已删除的评论
+        raw = [e for e in raw if e["rpid"] not in BilibiliClient._deleted_rpids]
+        if not raw:
+            stats["comments_found"] = 0
+            return [], stats
+
         if progress_callback:
             progress_callback(stats=stats)
 
@@ -538,3 +613,13 @@ class BilibiliClient:
 
         stats["comments_found"] = len(comments)
         return comments, stats
+
+
+# ---- 启动时加载已删除的 rpid 记录 ----
+if os.path.exists(DELETED_RPIDS_FILE):
+    try:
+        with open(DELETED_RPIDS_FILE, "r") as f:
+            BilibiliClient._deleted_rpids = set(json.load(f))
+            print(f"[持久化] 已加载 {len(BilibiliClient._deleted_rpids)} 条已删除记录")
+    except Exception:
+        pass

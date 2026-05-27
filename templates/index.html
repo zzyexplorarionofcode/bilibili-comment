@@ -119,6 +119,13 @@
   }
   .comment-meta { font-size: 12px; color: #999; display: flex; gap: 12px; }
   .comment-meta .likes { color: #fb7299; }
+  .del-btn {
+    margin-left: auto; padding: 2px 10px; border: 1px solid #fecaca; background: #fff;
+    border-radius: 4px; cursor: pointer; font-size: 12px; color: #dc2626;
+    transition: all .2s;
+  }
+  .del-btn:hover { background: #fef2f2; border-color: #dc2626; }
+  .del-btn:disabled { opacity: .5; cursor: not-allowed; }
 
   /* Pagination */
   .pagination {
@@ -453,11 +460,13 @@ function renderPage(page) {
       <td class="comment-cell">
         <div class="video-title"><a href="https://www.bilibili.com/video/${escapeHtml(c.video_bvid || '')}" target="_blank" rel="noopener">评论于 ${escapeHtml(c.video_bvid || '未知视频')}</a></div>
         <div class="comment-text">${escapeHtml(c.comment)}</div>
+        ${c.root_content && c.root_content !== c.comment ? '<div class="root-text" style="font-size:12px;color:#888;margin-top:4px;padding:4px 8px;background:#f0f0f5;border-radius:4px;border-left:3px solid #999;">回复了: ' + escapeHtml(c.root_content.substring(0, 300)) + '</div>' : ''}
         ${c.target_content && c.target_content !== c.comment ? '<div class="target-text" style="font-size:12px;color:#666;margin-top:4px;padding:4px 8px;background:#f0f0f5;border-radius:4px;">被回复: ' + escapeHtml(c.target_content.substring(0, 200)) + '</div>' : ''}
         ${replyList}
         <div class="comment-meta">
           <span>${fmtTime(c.time)}</span>
           ${c.reply_count ? '<span class="likes">💬 ' + c.reply_count + ' 条回复</span>' : ''}
+          <button class="del-btn" onclick="deleteComment(${c.rpid}, ${c.aid}, this)">删除</button>
         </div>
       </td>
     `;
@@ -482,6 +491,47 @@ function renderPage(page) {
   nextBtn.disabled = (page >= totalPages);
   if (page < totalPages) nextBtn.onclick = function() { renderPage(page + 1); };
   pag.appendChild(nextBtn);
+}
+
+async function deleteComment(rpid, aid, btn) {
+  if (!confirm('确定要删除这条评论吗？此操作不可撤销，B站同步删除。')) return;
+  btn.disabled = true;
+  btn.textContent = '删除中...';
+  try {
+    const parts = [];
+    const s = document.getElementById('cookieSessdata').value.trim();
+    const j = document.getElementById('cookieBiliJct').value.trim();
+    const b = document.getElementById('cookieBuvid3').value.trim();
+    if (s) parts.push('SESSDATA=' + s);
+    if (j) parts.push('bili_jct=' + j);
+    if (b) parts.push('buvid3=' + b);
+    const cookie = parts.join('; ');
+    const resp = await fetch(`/api/comment/${rpid}/delete?aid=${aid}&cookie=${encodeURIComponent(cookie)}`, { method: 'POST' });
+    const data = await resp.json();
+    if (resp.ok && data.code === 0) {
+      btn.textContent = '已删除';
+      btn.style.background = '#999';
+      const tr = btn.closest('tr');
+      if (tr) { tr.style.opacity = '0.4'; tr.style.pointerEvents = 'none'; }
+      // 从当前列表中移除，防止翻页时重新出现
+      allComments = allComments.filter(c => c.rpid !== rpid);
+      // 如果当前页空了，回退一页
+      const totalPages = Math.ceil(allComments.length / PAGE_SIZE) || 1;
+      if (currentPage > totalPages) currentPage = totalPages;
+      renderPage(currentPage);
+      document.getElementById('resultCount').textContent =
+        '共找到 ' + allComments.length + ' 条评论（已合并回复）';
+    } else {
+      btn.disabled = false;
+      const errMsg = data.detail || data.message || '未知错误';
+      btn.textContent = errMsg.substring(0, 30);
+      setTimeout(() => { btn.textContent = '删除'; }, 3000);
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '删除失败';
+    setTimeout(() => { btn.textContent = '删除'; }, 2000);
+  }
 }
 
 // 回车触发搜索

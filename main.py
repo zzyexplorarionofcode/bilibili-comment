@@ -205,6 +205,20 @@ async def api_task_events(task_id: str):
     )
 
 
+@app.post("/api/comment/{rpid}/delete")
+async def api_delete_comment(rpid: int, aid: int, cookie: str = ""):
+    """删除指定评论（需 bili_jct）"""
+    if not cookie:
+        raise HTTPException(status_code=400, detail="需要提供 Cookie（bili_jct 必填）")
+    client = BilibiliClient(cookie_str=cookie)
+    result = client.delete_comment(aid=aid, rpid=rpid)
+    code = result.get("code", -1)
+    if code != 0:
+        msg = result.get("message", f"B站返回: code={code}")
+        raise HTTPException(status_code=400, detail=msg)
+    return {"code": 0, "message": "已删除"}
+
+
 # ======================== 后台扫描 ========================
 
 
