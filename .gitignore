@@ -4,3 +4,4 @@
 venv/
 .venv/
 *.output
+.deleted_rpids.json
