@@ -169,6 +169,18 @@
     .user-card { flex-wrap: wrap; }
     .user-card .badge { text-align: left; width: 100%; }
   }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    padding: 12px 24px; border-radius: 10px; font-size: 14px; font-weight: 600;
+    z-index: 9999; box-shadow: 0 4px 20px rgba(0,0,0,.15);
+    opacity: 0; transition: opacity .3s; pointer-events: none;
+  }
+  .toast.visible { opacity: 1; }
+  .toast.success { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+  .toast.error { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+  .toast.info { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
 </style>
 </head>
 <body>
@@ -212,6 +224,9 @@
 
   <!-- 错误 -->
   <div id="errorBox" class="error-box"></div>
+
+  <!-- Toast 通知 -->
+  <div id="toast" class="toast"></div>
 
   <!-- 用户信息 -->
   <div id="userCard" class="user-card">
@@ -284,6 +299,13 @@ function hideError() {
   document.getElementById('errorBox').classList.remove('visible');
 }
 
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + (type || 'info') + ' visible';
+  setTimeout(() => { el.classList.remove('visible'); }, 3000);
+}
+
 async function startScan() {
   const uid = parseInt(document.getElementById('uid').value);
   const depth = parseInt(document.getElementById('depth').value);
@@ -314,6 +336,7 @@ async function startScan() {
     const infoResp = await fetch(`/api/user/${uid}/info`);
     const infoData = await infoResp.json();
     if (infoData.code !== 0) {
+      showToast('查询失败：' + (infoData.detail || '获取用户信息失败'), 'error');
       showError(infoData.detail || '获取用户信息失败');
       btn.disabled = false; myBtn.disabled = false;
       btn.textContent = '查询评论';
@@ -339,6 +362,7 @@ async function startScan() {
     connectSSE(scanData.task_id);
 
   } catch (err) {
+    showToast('网络错误：' + err.message, 'error');
     showError('网络错误: ' + err.message);
     btn.disabled = false; myBtn.disabled = false;
     btn.textContent = '查询评论';
@@ -384,6 +408,7 @@ async function startMyScan() {
     const data = await resp.json();
     connectSSE(data.task_id);
   } catch (err) {
+    showToast('网络错误：' + err.message, 'error');
     showError('网络错误: ' + err.message);
     btn.disabled = false; scanBtn.disabled = false;
     btn.textContent = '查询我的评论';
@@ -433,6 +458,7 @@ function connectSSE(taskId) {
   eventSource.addEventListener('error', function(e) {
     let msg = '扫描出错';
     try { const d = JSON.parse(e.data); msg = d.error || msg; } catch(ex) {}
+    showToast('查询失败：' + msg, 'error');
     showError(msg);
     document.getElementById('scanBtn').disabled = false;
     document.getElementById('scanBtn').textContent = '查询评论';
@@ -571,6 +597,7 @@ async function deleteComment(rpid, aid, btn) {
     const resp = await fetch(`/api/comment/${rpid}/delete?aid=${aid}&cookie=${encodeURIComponent(cookie)}`, { method: 'POST' });
     const data = await resp.json();
     if (resp.ok && data.code === 0) {
+      showToast('删除成功', 'success');
       btn.textContent = '已删除';
       btn.style.background = '#999';
       const tr = btn.closest('tr');
@@ -586,13 +613,13 @@ async function deleteComment(rpid, aid, btn) {
     } else {
       btn.disabled = false;
       const errMsg = data.detail || data.message || '未知错误';
-      btn.textContent = errMsg.substring(0, 30);
-      setTimeout(() => { btn.textContent = '删除'; }, 3000);
+      showToast('删除失败：' + errMsg.substring(0, 100), 'error');
+      btn.textContent = '删除';
     }
   } catch (err) {
     btn.disabled = false;
-    btn.textContent = '删除失败';
-    setTimeout(() => { btn.textContent = '删除'; }, 2000);
+    btn.textContent = '删除';
+    showToast('删除失败：网络错误 ' + err.message, 'error');
   }
 }
 
