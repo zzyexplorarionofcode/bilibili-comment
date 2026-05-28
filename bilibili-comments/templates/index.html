@@ -119,6 +119,12 @@
   }
   .comment-meta { font-size: 12px; color: #999; display: flex; gap: 12px; }
   .comment-meta .likes { color: #fb7299; }
+  .sort-btn {
+    padding: 4px 12px; border: 1px solid #d0d5dd; background: #fff;
+    border-radius: 6px; cursor: pointer; font-size: 13px; color: #555;
+    transition: all .2s; white-space: nowrap;
+  }
+  .sort-btn:hover { border-color: #4f6ef7; color: #4f6ef7; }
   .del-btn {
     margin-left: auto; padding: 2px 10px; border: 1px solid #fecaca; background: #fff;
     border-radius: 4px; cursor: pointer; font-size: 12px; color: #dc2626;
@@ -185,8 +191,22 @@
     <button id="scanBtn" onclick="startScan()">查询评论</button>
   </div>
 
-  <h2 style="font-size:15px;margin-bottom:8px;color:#666;">查询我的评论（需配置 Cookie，仅显示收到回复的评论）</h2>
-  <div class="search-box">
+  <h2 style="font-size:15px;margin-bottom:8px;color:#666;">查询我的评论（输入 Cookie 信息，查看全部评论历史）</h2>
+  <div class="search-box" style="flex-wrap:wrap;gap:8px;">
+    <div style="display:flex;gap:8px;flex:1;min-width:300px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:120px;">
+        <label style="font-size:12px;color:#888;">SESSDATA</label>
+        <input type="password" id="cookieSessdata" placeholder="必填" style="width:100%;padding:10px 14px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px;outline:none;">
+      </div>
+      <div style="flex:1;min-width:120px;">
+        <label style="font-size:12px;color:#888;">bili_jct <span style="color:#aaa;">(可选)</span></label>
+        <input type="password" id="cookieBiliJct" placeholder="可选" style="width:100%;padding:10px 14px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px;outline:none;">
+      </div>
+      <div style="flex:1;min-width:120px;">
+        <label style="font-size:12px;color:#888;">buvid3 <span style="color:#aaa;">(可选)</span></label>
+        <input type="password" id="cookieBuvid3" placeholder="可选" style="width:100%;padding:10px 14px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px;outline:none;">
+      </div>
+    </div>
     <button id="myScanBtn" onclick="startMyScan()" style="background:#fb7299;">查询我的评论</button>
   </div>
 
@@ -226,6 +246,7 @@
     <div class="results-header">
       <h2>评论列表</h2>
       <span class="count" id="resultCount"></span>
+      <button class="sort-btn" id="sortBtn" onclick="toggleSort()">按时间 ▾</button>
     </div>
     <table class="comment-table">
       <tbody id="commentBody"></tbody>
@@ -239,6 +260,7 @@
 let eventSource = null;
 let allComments = [];
 let currentPage = 1;
+let sortAscending = true;
 const PAGE_SIZE = 20;
 
 function fmtTime(unix) {
@@ -300,8 +322,19 @@ async function startScan() {
     }
     showUserInfo(infoData.data);
 
-    // 2. 启动扫描
-    const scanResp = await fetch(`/api/scan/${uid}?depth=${depth}`);
+    // 2. 构建 Cookie（从输入框）
+    const cp = [];
+    const ss = document.getElementById('cookieSessdata').value.trim();
+    const bj = document.getElementById('cookieBiliJct').value.trim();
+    const b3 = document.getElementById('cookieBuvid3').value.trim();
+    if (ss) cp.push('SESSDATA=' + ss);
+    if (bj) cp.push('bili_jct=' + bj);
+    if (b3) cp.push('buvid3=' + b3);
+    const ck = cp.join('; ');
+    const ckParam = ck ? '&cookie=' + encodeURIComponent(ck) : '';
+
+    // 3. 启动扫描
+    const scanResp = await fetch(`/api/scan/${uid}?depth=${depth}` + ckParam);
     const scanData = await scanResp.json();
     connectSSE(scanData.task_id);
 
@@ -334,7 +367,20 @@ async function startMyScan() {
   currentPage = 1;
 
   try {
-    const resp = await fetch('/api/my-comments');
+    const parts = [];
+    const s = document.getElementById('cookieSessdata').value.trim();
+    const j = document.getElementById('cookieBiliJct').value.trim();
+    const b = document.getElementById('cookieBuvid3').value.trim();
+    if (s) parts.push('SESSDATA=' + s);
+    if (j) parts.push('bili_jct=' + j);
+    if (b) parts.push('buvid3=' + b);
+    // 持久化保存
+    localStorage.setItem('bl_sessdata', s);
+    localStorage.setItem('bl_bili_jct', j);
+    localStorage.setItem('bl_buvid3', b);
+    const cookie = parts.join('; ');
+    const params = cookie ? `?cookie=${encodeURIComponent(cookie)}` : '';
+    const resp = await fetch('/api/my-comments' + params);
     const data = await resp.json();
     connectSSE(data.task_id);
   } catch (err) {
@@ -426,8 +472,24 @@ function showResults() {
   document.getElementById('resultsBox').classList.add('visible');
   document.getElementById('resultCount').textContent =
     `共找到 ${allComments.length} 条评论（已合并回复）`;
+  sortComments();
   currentPage = 1;
   renderPage(currentPage);
+}
+
+function toggleSort() {
+  sortAscending = !sortAscending;
+  const btn = document.getElementById('sortBtn');
+  btn.textContent = '按时间 ' + (sortAscending ? '▾' : '▴');
+  sortComments();
+  currentPage = 1;
+  renderPage(1);
+}
+
+function sortComments() {
+  allComments.sort((a, b) => {
+    return sortAscending ? a.time - b.time : b.time - a.time;
+  });
 }
 
 function renderPage(page) {
@@ -538,6 +600,16 @@ async function deleteComment(rpid, aid, btn) {
 document.getElementById('uid').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') startScan();
 });
+
+// 页面加载时恢复 Cookie 输入
+(function() {
+  var s = localStorage.getItem('bl_sessdata');
+  var j = localStorage.getItem('bl_bili_jct');
+  var b = localStorage.getItem('bl_buvid3');
+  if (s) document.getElementById('cookieSessdata').value = s;
+  if (j) document.getElementById('cookieBiliJct').value = j;
+  if (b) document.getElementById('cookieBuvid3').value = b;
+})();
 </script>
 </body>
 </html>

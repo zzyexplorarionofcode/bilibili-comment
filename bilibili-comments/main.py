@@ -78,9 +78,12 @@ async def api_user_info(uid: int):
 
 
 @app.get("/api/scan/{uid}")
-async def api_start_scan(uid: int, depth: int = 2):
+async def api_start_scan(uid: int, depth: int = 2, cookie: str = ""):
     """启动历史评论扫描，返回 task_id"""
-    client = _get_client()
+    if cookie:
+        client = BilibiliClient(cookie_str=cookie)
+    else:
+        client = _get_client()
     # 首次调用可能触发风控，加重试
     info = None
     for attempt in range(3):
@@ -108,6 +111,7 @@ async def api_start_scan(uid: int, depth: int = 2):
         "comments": [],
         "stats": {},
         "error": None,
+        "cookie": cookie,
     }
 
     thread = threading.Thread(
@@ -119,7 +123,7 @@ async def api_start_scan(uid: int, depth: int = 2):
 
 
 @app.get("/api/my-comments")
-async def api_my_comments():
+async def api_my_comments(cookie: str = ""):
     """查询当前账号的评论历史（通过消息中心回复通知）"""
     client = _get_client()
 
@@ -131,6 +135,7 @@ async def api_my_comments():
         "comments": [],
         "stats": {},
         "error": None,
+        "cookie": cookie,
     }
 
     thread = threading.Thread(
@@ -234,8 +239,14 @@ def _run_scan(task_id: str, uid: int, depth: int, user_info: dict):
     try:
         with task["lock"]:
             task["status"] = "scanning"
+            cookie = task.get("cookie", "")
 
-        client = _get_client()
+        if cookie:
+            from bilibili_api import BilibiliClient as BC
+            client = BC(cookie_str=cookie)
+        else:
+            client = _get_client()
+
         comments, stats = client.scan_user_comments(
             uid=uid,
             depth=depth,
@@ -275,8 +286,14 @@ def _run_my_scan(task_id: str):
     try:
         with task["lock"]:
             task["status"] = "scanning"
+            cookie = task.get("cookie", "")
 
-        client = _get_client()
+        # 如果前端传入了 Cookie，创建独立客户端；否则使用共享客户端
+        if cookie:
+            client = BilibiliClient(cookie_str=cookie)
+        else:
+            client = _get_client()
+
         comments, stats = client.get_my_comment_history(
             progress_callback=progress_callback,
         )
